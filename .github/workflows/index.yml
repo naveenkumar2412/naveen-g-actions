@@ -1,0 +1,45 @@
+name: Deploy to EC2, ECS, S3, and CloudFront
+
+on:
+  push:
+    branches:
+      - main  # Trigger the workflow on push to the main branch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up AWS CLI
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+
+    - name: Upload index.html to S3
+      run: |
+        aws s3 cp index.html s3://${{ secrets.S3_BUCKET_NAME }}/index.html
+
+    - name: Invalidate CloudFront cache
+      run: |
+        aws cloudfront create-invalidation \
+          --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
+          --paths "/*"
+
+    - name: Deploy to ECS (Optional)
+      run: |
+        aws ecs update-service --cluster ${{ secrets.AWS_ECS_CLUSTER }} --service ${{ secrets.AWS_ECS_SERVICE }} --force-new-deployment
+
+    - name: Deploy to EC2 (Optional)
+      run: |
+        # Create the SSH key file from the secret stored in GitHub Secrets
+        echo "${{ secrets.EC2_SSH_KEY }}" > my-ec2-key.pem
+        chmod 600 my-ec2-key.pem  # Make sure the key is readable only by the script
+
+        # Get the EC2 instance's public IP and SSH into it to restart Nginx
+        ssh -o StrictHostKeyChecking=no -i my-ec2-key.pem ubuntu@$(aws ec2 describe-instances --instance-ids ${{ secrets.AWS_EC2_INSTANCE_ID }} --query 'Reservations[0].Instances[0].PublicIpAddress' --output text) "sudo systemctl restart nginx"
